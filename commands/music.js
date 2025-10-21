@@ -60,7 +60,7 @@ const playCommand = {
         if (queue.songs.length === 0 && queue.currentSong) {
             try {
                 const embed = createMusicEmbed(queue);
-                const buttons = createControlButtons();
+                const buttons = createControlButtons(false, queue.isPlaying);
                 await interaction.editReply({ embeds: [embed], components: [buttons] });
             } catch (error) {
                 if (error.code === 50001) {
@@ -140,7 +140,7 @@ const nowPlayingCommand = {
         }
 
         const embed = createMusicEmbed(queue);
-        const buttons = createControlButtons();
+        const buttons = createControlButtons(false, queue.isPlaying);
         await interaction.reply({ embeds: [embed], components: [buttons] });
     }
 };

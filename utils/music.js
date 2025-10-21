@@ -246,13 +246,34 @@ function createMusicEmbed(queue) {
     .setFooter({ text: 'Music Bot' })
     .setTimestamp();
 }
-function createControlButtons(disabled = false) {
+function createControlButtons(disabled = false, isPlaying = true) {
+  const playbackStyle = isPlaying ? ButtonStyle.Success : ButtonStyle.Secondary;
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('music_pause').setEmoji('⏸️').setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('music_skip').setEmoji('⏭️').setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('music_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('music_loop').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('music_queue').setEmoji('📝').setStyle(ButtonStyle.Secondary).setDisabled(disabled)
+    new ButtonBuilder()
+      .setCustomId('music_pause')
+      .setEmoji('⏸️')
+      .setStyle(playbackStyle)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId('music_skip')
+      .setEmoji('⏭️')
+      .setStyle(playbackStyle)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId('music_stop')
+      .setEmoji('⏹️')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId('music_loop')
+      .setEmoji('🔁')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId('music_queue')
+      .setEmoji('📝')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled)
   );
 }
 
@@ -300,8 +321,17 @@ class MusicQueue {
         console.log('Using cached file:', cached);
         const fileStream = fs.createReadStream(cached);
         const { stream, type } = await demuxProbe(fileStream);
-        const resource = createAudioResource(stream, { inputType: type, inlineVolume: true });
+        const resource = createAudioResource(stream, {
+          inputType: type,
+          inlineVolume: true,
+          // Add a small silence at the start to prevent the glitch
+          silencePaddingFrames: 3,
+        });
         resource.volume.setVolume(this.volume);
+        
+        // Wait a tiny bit before playing to ensure proper initialization
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         this.player.play(resource);
         if (this.connection) this.connection.subscribe(this.player);
         return;
@@ -477,7 +507,7 @@ class MusicQueue {
   async updateEmbed(message, disabled = false) {
     try {
       const embed = createMusicEmbed(this);
-      const buttons = createControlButtons(disabled);
+      const buttons = createControlButtons(disabled, this.isPlaying);
       await message.edit({ embeds: [embed], components: [buttons] });
     } catch (err) { console.error('Update embed error:', err); }
   }
