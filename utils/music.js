@@ -24,17 +24,34 @@ const CACHE_INDEX_PATH = path.join(cacheDir, 'index.json');
 /* detect system yt-dlp binary */
 let ytDlpPath = null;
 try {
-  const which = spawnSync('which', ['yt-dlp']);
-  if (which.status === 0) ytDlpPath = which.stdout.toString().trim();
+  // First try where command checks both PATH and current directory
+  const where = spawnSync('where', ['yt-dlp'], { shell: true });
+  if (where.status === 0) {
+    ytDlpPath = where.stdout.toString().split('\n')[0].trim();
+  }
 } catch (e) {}
+
 if (!ytDlpPath) {
-  const candidates = [
-    '/usr/local/bin/yt-dlp',
-    '/usr/bin/yt-dlp',
-    path.join(process.env.HOME || '', '.local/bin/yt-dlp')
-  ];
-  for (const c of candidates) {
-    try { if (fs.existsSync(c)) { ytDlpPath = c; break; } } catch {}
+  // Windows-specific paths
+  if (process.platform === 'win32') {
+    const candidates = [
+      path.join(process.cwd(), 'yt-dlp.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'yt-dlp/yt-dlp.exe'),
+      path.join(process.env.APPDATA || '', 'yt-dlp/yt-dlp.exe')
+    ];
+    for (const c of candidates) {
+      try { if (fs.existsSync(c)) { ytDlpPath = c; break; } } catch {}
+    }
+  } else {
+    // Linux paths
+    const candidates = [
+      '/usr/local/bin/yt-dlp',
+      '/usr/bin/yt-dlp',
+      path.join(process.env.HOME || '', '.local/bin/yt-dlp')
+    ];
+    for (const c of candidates) {
+      try { if (fs.existsSync(c)) { ytDlpPath = c; break; } } catch {}
+    }
   }
 }
 
@@ -95,11 +112,13 @@ function findCachedFile(videoId) {
     const full = path.join(cacheDir, cacheIndex[videoId].file);
     try {
       const st = fs.statSync(full);
-      if (st.size > 1024) {
+      // Increase minimum size to 100KB to ensure file is properly downloaded
+      if (st.size > 102400) {
         console.log('Cache index hit for', videoId, '->', cacheIndex[videoId].file);
         return full;
       } else {
         console.log('Cache index exists but size too small:', full);
+        try { fs.unlinkSync(full); } catch {} // Delete small/corrupt file
         delete cacheIndex[videoId];
         saveCacheIndex();
       }
@@ -296,7 +315,16 @@ class MusicQueue {
       let inputStream = null;
       if (ytDlpPath) {
         console.log('Streaming via system yt-dlp + ffmpeg:', song.title);
-        const ytdlpArgs = ['-f', 'bestaudio', '-o', '-', '--no-warnings', '--no-progress', song.url];
+        const ytdlpArgs = [
+          '-f', 'bestaudio/best',
+          '-o', '-',
+          '--no-warnings',
+          '--no-progress',
+          '--extract-audio',
+          '--audio-format', 'opus',
+          '--audio-quality', '0',
+          song.url
+        ];
         const ytdlpProc = spawn(ytDlpPath, ytdlpArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
         spawnedProcs.push(ytdlpProc);
 

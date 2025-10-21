@@ -58,9 +58,18 @@ const playCommand = {
         await queue.add(songInfo);
 
         if (queue.songs.length === 0 && queue.currentSong) {
-            const embed = createMusicEmbed(queue);
-            const buttons = createControlButtons();
-            await interaction.editReply({ embeds: [embed], components: [buttons] });
+            try {
+                const embed = createMusicEmbed(queue);
+                const buttons = createControlButtons();
+                await interaction.editReply({ embeds: [embed], components: [buttons] });
+            } catch (error) {
+                if (error.code === 50001) {
+                    // If we can't update the message, just send a simple response
+                    await interaction.editReply(`✅ Playing **${songInfo.title}**`);
+                } else {
+                    throw error;
+                }
+            }
         } else {
             await interaction.editReply(`✅ **${songInfo.title}** added to queue!`);
         }
