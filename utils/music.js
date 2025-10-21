@@ -378,6 +378,7 @@ class MusicQueue {
       // Update the last message if we have one
       if (this.lastMessage) {
         await this.updateEmbed(this.lastMessage, false);
+      } // Missing closing bracket was here
 
       // 1) check cache index / files
       const cached = ENABLE_CACHE ? findCachedFile(song.id) : null;
