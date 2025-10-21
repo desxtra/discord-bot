@@ -256,10 +256,10 @@ function formatDuration(seconds) {
 /* ---------- EMBEDS & CONTROLS (same as before) ---------- */
 function createMusicEmbed(queue) {
   const s = queue.currentSong;
-  if (!s) return new EmbedBuilder().setTitle('Not playing').setColor('#666666');
+  if (!s) return new EmbedBuilder().setColor('#FF0000').setTitle('Not playing');
 
   return new EmbedBuilder()
-    .setColor(queue.isPaused ? '#FFA500' : '#FF0000')
+    .setColor(queue.isPaused ? '#FFA500' : '#00FF00')
     .setTitle(queue.isPaused ? 'Paused' : 'Now Playing')
     .setDescription(`**${s.title}**`)
     .addFields(
@@ -279,26 +279,31 @@ function createControlButtons(disabled = false, isPlaying = true) {
     new ButtonBuilder()
       .setCustomId('music_pause')
       .setEmoji('⏸️')
+      .setLabel(isPlaying ? 'Pause' : 'Resume')
       .setStyle(playbackStyle)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId('music_skip')
       .setEmoji('⏭️')
+      .setLabel('Skip')
       .setStyle(playbackStyle)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId('music_stop')
       .setEmoji('⏹️')
+      .setLabel('Stop')
       .setStyle(ButtonStyle.Danger)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId('music_loop')
       .setEmoji('🔁')
+      .setLabel('Loop')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId('music_queue')
       .setEmoji('📝')
+      .setLabel('Queue')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(disabled)
   );
@@ -316,12 +321,33 @@ class MusicQueue {
     this.isPaused = false;
     this.volume = 0.5;
     this.loop = false;
+    this.lastMessage = null;
 
-    this.player.on(AudioPlayerStatus.Idle, () => {
+    this.player.on(AudioPlayerStatus.Idle, async () => {
       if (this.loop && this.currentSong) {
-        this.playSong(this.currentSong).catch(e => { console.error('Loop play error:', e); this.playNext(); });
+        try {
+          await this.playSong(this.currentSong);
+        } catch (e) {
+          console.error('Loop play error:', e);
+          await this.playNext();
+        }
       } else {
-        this.playNext().catch(e => { console.error('PlayNext error:', e); });
+        try {
+          const hasNext = await this.playNext();
+          if (!hasNext && this.lastMessage) {
+            // No more songs, update the message
+            this.currentSong = null;
+            this.isPlaying = false;
+            await this.updateEmbed(this.lastMessage, true);
+          }
+        } catch (e) {
+          console.error('PlayNext error:', e);
+          if (this.lastMessage) {
+            this.currentSong = null;
+            this.isPlaying = false;
+            await this.updateEmbed(this.lastMessage, true);
+          }
+        }
       }
     });
 
@@ -341,6 +367,17 @@ class MusicQueue {
       this.currentSong = song;
       this.isPlaying = true;
       this.isPaused = false;
+      if (this.lastMessage) {
+        try {
+          await this.updateEmbed(this.lastMessage, false);
+        } catch (e) {
+          console.warn('Failed to update message on song start:', e);
+        }
+      }
+      
+      // Update the last message if we have one
+      if (this.lastMessage) {
+        await this.updateEmbed(this.lastMessage, false);
 
       // 1) check cache index / files
       const cached = ENABLE_CACHE ? findCachedFile(song.id) : null;
@@ -558,6 +595,7 @@ class MusicQueue {
 
   async updateEmbed(message, disabled = false) {
     try {
+      this.lastMessage = message;
       const embed = createMusicEmbed(this);
       const buttons = createControlButtons(disabled, this.isPlaying);
       await message.edit({ embeds: [embed], components: [buttons] });
