@@ -107,23 +107,24 @@ function getFinalPathForId(id) {
 }
 function findCachedFile(videoId) {
   if (!ENABLE_CACHE) return null;
+  console.log('Looking for cached file:', videoId);
+  
   // 1) index lookup
   if (cacheIndex[videoId] && cacheIndex[videoId].file) {
     const full = path.join(cacheDir, cacheIndex[videoId].file);
     try {
       const st = fs.statSync(full);
-      // Increase minimum size to 100KB to ensure file is properly downloaded
       if (st.size > 102400) {
-        console.log('Cache index hit for', videoId, '->', cacheIndex[videoId].file);
+        console.log('Cache hit:', videoId, '->', cacheIndex[videoId].file, '(', Math.round(st.size / 1024), 'KB)');
         return full;
       } else {
-        console.log('Cache index exists but size too small:', full);
-        try { fs.unlinkSync(full); } catch {} // Delete small/corrupt file
+        console.log('Cache file exists but too small:', full);
+        try { fs.unlinkSync(full); } catch {} // Delete small file
         delete cacheIndex[videoId];
         saveCacheIndex();
       }
     } catch (e) {
-      console.log('Cache index points to missing file, removing entry:', full);
+      console.log('Cache index entry points to missing file:', full);
       delete cacheIndex[videoId];
       saveCacheIndex();
     }
@@ -162,17 +163,43 @@ function findCachedFile(videoId) {
 }
 function finalizeTmpAtomic(tmpPath, finalPath, videoId, title) {
   try {
-    if (!fs.existsSync(tmpPath)) return false;
+    // Wait a bit to ensure file is fully written
+    if (!fs.existsSync(tmpPath)) {
+      console.log('Temp file not found:', tmpPath);
+      return false;
+    }
+
+    // Check if file size is reasonable (> 100KB)
+    const stats = fs.statSync(tmpPath);
+    if (stats.size < 102400) {
+      console.log('Temp file too small:', stats.size, 'bytes');
+      try { fs.unlinkSync(tmpPath); } catch {}
+      return false;
+    }
+
     // ensure finalPath uses canonical name
     const canonical = getFinalPathForId(videoId);
+    
+    // If target file exists, remove it first
+    if (fs.existsSync(canonical)) {
+      try { fs.unlinkSync(canonical); } catch {}
+    }
+
     // rename tmp -> canonical final
     fs.renameSync(tmpPath, canonical);
-    cacheIndex[videoId] = { file: path.basename(canonical), title: title || null, createdAt: Date.now() };
+    
+    // Update cache index
+    cacheIndex[videoId] = { 
+      file: path.basename(canonical), 
+      title: title || null, 
+      createdAt: Date.now(),
+      size: stats.size
+    };
     saveCacheIndex();
-    console.log('Cached file saved:', canonical);
+    console.log('Cached file saved:', canonical, '(', Math.round(stats.size / 1024), 'KB)');
     return true;
   } catch (e) {
-    console.warn('Failed to finalize cache', e && e.message);
+    console.warn('Failed to finalize cache:', e && e.message);
     try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
     return false;
   }
@@ -380,14 +407,35 @@ class MusicQueue {
         // write to tmp (if enabled) by piping a PassThrough clone
         if (ENABLE_CACHE) {
           try {
+            console.log('Setting up cache write for:', song.id);
             const tee = new PassThrough();
-            // pipe ffmpeg stdout to tee and also keep original for probe/play
             ffmpeg.stdout.pipe(tee);
+            
             const tmpWrite = fs.createWriteStream(tmpPath);
-            tee.pipe(tmpWrite).on('error', () => {});
-            // keep inputStream as ffmpeg.stdout for probe (note ffmpeg.stdout already piped)
+            let totalBytes = 0;
+            
+            tee.on('data', chunk => {
+              totalBytes += chunk.length;
+            });
+            
+            tee.pipe(tmpWrite);
+            
+            tmpWrite.on('finish', () => {
+              console.log('Cache write finished, total bytes:', totalBytes);
+              if (totalBytes > 102400) {
+                finalizeTmpAtomic(tmpPath, finalPath, song.id, song.title);
+              } else {
+                console.log('Cache file too small, deleting:', tmpPath);
+                try { fs.unlinkSync(tmpPath); } catch {}
+              }
+            });
+            
+            tmpWrite.on('error', (err) => {
+              console.warn('Cache write error:', err && err.message);
+              try { fs.unlinkSync(tmpPath); } catch {}
+            });
           } catch (e) {
-            console.warn('Cache write failed (yt-dlp):', e && e.message);
+            console.warn('Cache setup failed:', e && e.message);
           }
         }
 
