@@ -351,14 +351,8 @@ class MusicQueue {
         const resource = createAudioResource(stream, {
           inputType: type,
           inlineVolume: true,
-          // Add a small silence at the start to prevent the glitch
-          silencePaddingFrames: 3,
         });
         resource.volume.setVolume(this.volume);
-        
-        // Wait a tiny bit before playing to ensure proper initialization
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
         this.player.play(resource);
         if (this.connection) this.connection.subscribe(this.player);
         return;
@@ -404,39 +398,49 @@ class MusicQueue {
         ytdlpProc.stdout.pipe(ffmpeg.stdin);
         inputStream = ffmpeg.stdout;
 
-        // write to tmp (if enabled) by piping a PassThrough clone
+        // Set up caching immediately if enabled
         if (ENABLE_CACHE) {
           try {
             console.log('Setting up cache write for:', song.id);
-            const tee = new PassThrough();
-            ffmpeg.stdout.pipe(tee);
-            
-            const tmpWrite = fs.createWriteStream(tmpPath);
+            // Create write stream to final path directly
+            const cacheWrite = fs.createWriteStream(finalPath);
             let totalBytes = 0;
+
+            // Create a PassThrough for both playing and caching
+            const playStream = new PassThrough();
+            const cacheStream = new PassThrough();
             
-            tee.on('data', chunk => {
-              totalBytes += chunk.length;
+            ffmpeg.stdout.pipe(playStream);
+            ffmpeg.stdout.pipe(cacheStream);
+            
+            // Handle caching in parallel with playback
+            cacheStream.pipe(cacheWrite);
+            
+            // Update cache index as soon as we start getting data
+            cacheStream.once('data', () => {
+              cacheIndex[song.id] = { 
+                file: path.basename(finalPath), 
+                title: song.title,
+                createdAt: Date.now()
+              };
+              saveCacheIndex();
             });
             
-            tee.pipe(tmpWrite);
-            
-            tmpWrite.on('finish', () => {
-              console.log('Cache write finished, total bytes:', totalBytes);
-              if (totalBytes > 102400) {
-                finalizeTmpAtomic(tmpPath, finalPath, song.id, song.title);
-              } else {
-                console.log('Cache file too small, deleting:', tmpPath);
-                try { fs.unlinkSync(tmpPath); } catch {}
-              }
+            cacheWrite.on('finish', () => {
+              const stats = fs.statSync(finalPath);
+              console.log('Cache write complete:', Math.round(stats.size / 1024), 'KB');
+              cacheIndex[song.id].size = stats.size;
+              saveCacheIndex();
             });
-            
-            tmpWrite.on('error', (err) => {
-              console.warn('Cache write error:', err && err.message);
-              try { fs.unlinkSync(tmpPath); } catch {}
-            });
+
+            // Use the playStream for audio
+            inputStream = playStream;
           } catch (e) {
             console.warn('Cache setup failed:', e && e.message);
+            inputStream = ffmpeg.stdout; // Fallback to direct output
           }
+        } else {
+          inputStream = ffmpeg.stdout;
         }
 
         ytdlpProc.on('close', () => { try { ffmpeg.stdin.end(); } catch {} });

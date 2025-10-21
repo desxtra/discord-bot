@@ -7,11 +7,9 @@ module.exports = (client) => {
 
     const queue = getQueue(interaction.guildId);
     if (!queue?.currentSong) {
-      return interaction.reply({ content: 'Nothing is playing.', ephemeral: true });
+      await interaction.deferUpdate();
+      return;
     }
-
-    // acknowledge quickly (ephemeral)
-    await interaction.deferReply({ ephemeral: true });
 
     try {
       const { customId } = interaction;
@@ -19,40 +17,40 @@ module.exports = (client) => {
         case 'music_pause': {
           if (queue.isPaused) {
             queue.resume();
-            await interaction.editReply({ content: '▶️ Resumed.' });
           } else {
             queue.pause();
-            await interaction.editReply({ content: '⏸️ Paused.' });
           }
-          // update embed on message
+          // Just update the main message
           await queue.updateEmbed(interaction.message);
+          await interaction.deferUpdate();
           break;
         }
 
         case 'music_skip': {
           queue.skip();
-          await interaction.editReply({ content: '⏭️ Skipped.' });
-          // embed will update on 'Idle' event when next song starts; optionally update immediately
+          // Just update the main message
           try { await queue.updateEmbed(interaction.message); } catch {}
+          await interaction.deferUpdate();
           break;
         }
 
         case 'music_stop': {
           queue.stop();
           await queue.updateEmbed(interaction.message, true); // disable controls
-          await interaction.editReply({ content: '⏹️ Stopped and cleared queue.' });
+          await interaction.deferUpdate();
           break;
         }
 
         case 'music_loop': {
           const status = queue.toggleLoop();
-          await interaction.editReply({ content: `🔁 Loop ${status ? 'ON' : 'OFF'}.` });
           await queue.updateEmbed(interaction.message);
+          await interaction.deferUpdate();
           break;
         }
 
         case 'music_queue': {
           const qEmbed = createQueueEmbed(queue);
+          // For queue, we'll show an ephemeral message since it's informational
           await interaction.editReply({ embeds: [qEmbed] });
           break;
         }
