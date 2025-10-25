@@ -3,6 +3,19 @@ const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { registerCommands } = require('./handlers/commandHandler');
 const { interactionCreate } = require('./handlers/interactionHandler');
 
+// Configure play-dl
+async function setupPlayDL() {
+    try {
+        await play.setToken({
+            youtube: {
+                cookie: process.env.YOUTUBE_COOKIE || '',
+            },
+        });
+    } catch (error) {
+        console.warn('Warning: play-dl setup failed:', error);
+    }
+}
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -16,7 +29,7 @@ client.commands = new Collection();
 client.musicQueues = new Map();
 
 // Register commands when the bot is ready
-client.once('clientReady', () => {
+client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
     registerCommands(client);
 });
@@ -39,8 +52,13 @@ process.on('uncaughtException', (error) => {
     console.error('Uncaught exception:', error);
 });
 
-// Login the bot
-client.login(process.env.DISCORD_TOKEN).catch(error => {
-    console.error('Failed to login:', error);
-    process.exit(1);
-});
+// Initialize play-dl and login
+(async () => {
+    try {
+        await setupPlayDL();
+        await client.login(process.env.DISCORD_TOKEN);
+    } catch (error) {
+        console.error('Failed to initialize:', error);
+        process.exit(1);
+    }
+})();

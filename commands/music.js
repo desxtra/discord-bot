@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
-const play = require('play-dl');
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
+const ytdl = require('ytdl-core');
+const yts = require('yt-search');
 
 const commands = [
     {
@@ -29,26 +30,35 @@ const commands = [
 
             try {
                 let songInfo;
-                if (query.includes('youtube.com') || query.includes('youtu.be')) {
-                    songInfo = await play.video_info(query);
+                
+                if (ytdl.validateURL(query)) {
+                    const info = await ytdl.getInfo(query);
+                    songInfo = {
+                        title: info.videoDetails.title,
+                        url: info.videoDetails.video_url,
+                        thumbnail: info.videoDetails.thumbnails[0]?.url || null,
+                        duration: parseInt(info.videoDetails.lengthSeconds)
+                    };
                 } else {
-                    const searchResult = await play.search(query, { limit: 1 });
-                    if (!searchResult || !searchResult.length) {
+                    const searchResults = await yts(query);
+                    if (!searchResults.videos.length) {
                         return interaction.editReply('No results found!');
                     }
-                    songInfo = await play.video_info(searchResult[0].url);
+                    const videoResult = searchResults.videos[0];
+                    songInfo = {
+                        title: videoResult.title,
+                        url: videoResult.url,
+                        thumbnail: videoResult.thumbnail,
+                        duration: videoResult.duration.seconds
+                    };
                 }
-
-                if (!songInfo || !songInfo.video_details) {
-                    return interaction.editReply('Could not get song information!');
-                }
-
-                const song = {
-                    title: songInfo.video_details.title || 'Unknown Title',
-                    url: songInfo.video_details.url,
-                    thumbnail: songInfo.video_details.thumbnail?.url || '',
-                    duration: songInfo.video_details.durationInSec || 0
-                };
+                    
+                    const song = {
+                        title: songInfo.title,
+                        url: songInfo.url,
+                        thumbnail: songInfo.thumbnail,
+                        duration: songInfo.duration
+                    };
 
                 // Get or create queue for the guild
                 if (!client.musicQueues.has(interaction.guildId)) {
@@ -78,9 +88,13 @@ const commands = [
 
                 const embed = new EmbedBuilder()
                     .setTitle('Added to queue')
-                    .setDescription(`[${song.title}](${song.url})`)
-                    .setThumbnail(song.thumbnail)
-                    .setColor('#00ff00');
+                    .setDescription(`[${song.title}](${song.url})`);
+
+                if (song.thumbnail) {
+                    embed.setThumbnail(song.thumbnail);
+                }
+                
+                embed.setColor('#00ff00');
 
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -242,15 +256,13 @@ async function playSong(queue, guild, client) {
 
     const song = queue.songs[0];
     try {
-        const stream = await play.stream(song.url);
-        if (!stream) {
-            console.error('Failed to get stream for:', song.title);
-            queue.songs.shift();
-            return playSong(queue, guild, client);
-        }
+        const stream = ytdl(song.url, {
+            filter: 'audioonly',
+            highWaterMark: 1 << 25,
+            quality: 'highestaudio'
+        });
 
-        const resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
+        const resource = createAudioResource(stream, {
             inlineVolume: true
         });
 

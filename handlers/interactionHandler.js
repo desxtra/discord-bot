@@ -1,4 +1,4 @@
-const { handleMusicButton } = require('./musicButton');
+// Music commands handler is managed in commands/music.js
 
 async function interactionCreate(interaction, client) {
     if (!interaction.isCommand() && !interaction.isButton()) return;
