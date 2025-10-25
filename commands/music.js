@@ -1,237 +1,253 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const { 
-    getQueue, 
-    deleteQueue,
-    searchYouTube, 
-    getVideoInfo, 
-    isYouTubeUrl,
-    createMusicEmbed,
-    createControlButtons,
-    createQueueEmbed
-} = require('../utils/music');
+const { SlashCommandBuilder } = require('@discordjs/builders');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
+const play = require('play-dl');
 
-// Play Command
-const playCommand = {
-    data: new SlashCommandBuilder()
-        .setName('play')
-        .setDescription('Play music from YouTube')
-        .addStringOption(option =>
-            option.setName('query')
-                .setDescription('Song name or YouTube URL')
-                .setRequired(true)
-        ),
+const commands = [
+    {
+        data: new SlashCommandBuilder()
+            .setName('search')
+            .setDescription('Search and play music from YouTube')
+            .addStringOption(option =>
+                option.setName('query')
+                    .setDescription('The song to search for')
+                    .setRequired(true)),
+        async execute(interaction, client) {
+            const query = interaction.options.getString('query');
+            const voiceChannel = interaction.member.voice.channel;
 
-    async execute(interaction) {
-        await interaction.deferReply();
-
-        const voiceChannel = interaction.member.voice.channel;
-        if (!voiceChannel) {
-            return interaction.editReply('❌ Join a voice channel first!');
-        }
-
-        const query = interaction.options.getString('query');
-        let songInfo;
-
-        if (isYouTubeUrl(query)) {
-            songInfo = await getVideoInfo(query);
-        } else {
-            songInfo = await searchYouTube(query);
-        }
-
-        if (!songInfo) {
-            return interaction.editReply('❌ Could not find that song!');
-        }
-
-        const queue = getQueue(interaction.guildId);
-
-        if (!queue.connection) {
-            queue.connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: interaction.guildId,
-                adapterCreator: interaction.guild.voiceAdapterCreator,
-            });
-            await entersState(queue.connection, VoiceConnectionStatus.Ready, 30_000);
-        }
-
-        await queue.add(songInfo);
-
-        if (queue.songs.length === 0 && queue.currentSong) {
-            try {
-                const embed = createMusicEmbed(queue);
-                const buttons = createControlButtons(false, queue.isPlaying);
-                await interaction.editReply({ embeds: [embed], components: [buttons] });
-            } catch (error) {
-                if (error.code === 50001) {
-                    // If we can't update the message, just send a simple response
-                    await interaction.editReply(`✅ Playing **${songInfo.title}**`);
-                } else {
-                    throw error;
-                }
+            if (!voiceChannel) {
+                return interaction.reply('You need to be in a voice channel to use this command!');
             }
-        } else {
-            await interaction.editReply(`✅ **${songInfo.title}** added to queue!`);
+
+            await interaction.deferReply();
+
+            try {
+                let songInfo;
+                if (query.includes('youtube.com') || query.includes('youtu.be')) {
+                    songInfo = await play.video_info(query);
+                } else {
+                    const searchResult = await play.search(query, { limit: 1 });
+                    if (!searchResult.length) {
+                        return interaction.editReply('No results found!');
+                    }
+                    songInfo = await play.video_info(searchResult[0].url);
+                }
+
+                const song = {
+                    title: songInfo.video_details.title,
+                    url: songInfo.video_details.url,
+                    thumbnail: songInfo.video_details.thumbnail.url,
+                    duration: songInfo.video_details.durationInSec
+                };
+
+                // Get or create queue for the guild
+                if (!client.musicQueues.has(interaction.guildId)) {
+                    const queueConstruct = {
+                        voiceChannel,
+                        connection: null,
+                        songs: [],
+                        player: createAudioPlayer(),
+                        playing: false
+                    };
+                    client.musicQueues.set(interaction.guildId, queueConstruct);
+                }
+
+                const queue = client.musicQueues.get(interaction.guildId);
+                queue.songs.push(song);
+
+                if (!queue.playing) {
+                    queue.playing = true;
+                    queue.connection = joinVoiceChannel({
+                        channelId: voiceChannel.id,
+                        guildId: interaction.guildId,
+                        adapterCreator: interaction.guild.voiceAdapterCreator,
+                    });
+                    queue.connection.subscribe(queue.player);
+                    playSong(queue, interaction.guild, client);
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('Added to queue')
+                    .setDescription(`[${song.title}](${song.url})`)
+                    .setThumbnail(song.thumbnail)
+                    .setColor('#00ff00');
+
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('pause')
+                            .setLabel('⏸️ Pause')
+                            .setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder()
+                            .setCustomId('resume')
+                            .setLabel('▶️ Resume')
+                            .setStyle(ButtonStyle.Success),
+                        new ButtonBuilder()
+                            .setCustomId('skip')
+                            .setLabel('⏭️ Skip')
+                            .setStyle(ButtonStyle.Secondary),
+                        new ButtonBuilder()
+                            .setCustomId('stop')
+                            .setLabel('⏹️ Stop')
+                            .setStyle(ButtonStyle.Danger)
+                    );
+
+                await interaction.editReply({ embeds: [embed], components: [row] });
+            } catch (error) {
+                console.error(error);
+                await interaction.editReply('An error occurred while trying to play the song!');
+            }
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('pause')
+            .setDescription('Pause the current song'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue || !queue.playing) {
+                return interaction.reply('There is nothing playing!');
+            }
+            queue.player.pause();
+            await interaction.reply('Paused the music!');
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('resume')
+            .setDescription('Resume the current song'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue || !queue.playing) {
+                return interaction.reply('There is nothing to resume!');
+            }
+            queue.player.unpause();
+            await interaction.reply('Resumed the music!');
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('stop')
+            .setDescription('Stop playing and clear the queue'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue) {
+                return interaction.reply('There is nothing playing!');
+            }
+            queue.songs = [];
+            queue.player.stop();
+            queue.connection.destroy();
+            client.musicQueues.delete(interaction.guildId);
+            await interaction.reply('Stopped the music and cleared the queue!');
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('disconnect')
+            .setDescription('Disconnect the bot from voice channel'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue) {
+                return interaction.reply('I am not connected to any voice channel!');
+            }
+            queue.connection.destroy();
+            client.musicQueues.delete(interaction.guildId);
+            await interaction.reply('Disconnected from the voice channel!');
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('remove')
+            .setDescription('Remove a song from the queue')
+            .addIntegerOption(option =>
+                option.setName('position')
+                    .setDescription('The position of the song in the queue')
+                    .setRequired(true)),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue) {
+                return interaction.reply('There is no queue!');
+            }
+            
+            const position = interaction.options.getInteger('position');
+            if (position < 1 || position > queue.songs.length) {
+                return interaction.reply('Invalid position!');
+            }
+
+            const removed = queue.songs.splice(position - 1, 1)[0];
+            await interaction.reply(`Removed **${removed.title}** from the queue!`);
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('queue')
+            .setDescription('Display the current music queue'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue || !queue.songs.length) {
+                return interaction.reply('There is no queue!');
+            }
+
+            const queueList = queue.songs.map((song, index) => 
+                `${index + 1}. [${song.title}](${song.url})`
+            ).join('\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle('Music Queue')
+                .setDescription(queueList)
+                .setColor('#00ff00');
+
+            await interaction.reply({ embeds: [embed] });
+        }
+    },
+    {
+        data: new SlashCommandBuilder()
+            .setName('nowplaying')
+            .setDescription('Show the currently playing song'),
+        async execute(interaction, client) {
+            const queue = client.musicQueues.get(interaction.guildId);
+            if (!queue || !queue.songs.length) {
+                return interaction.reply('There is nothing playing!');
+            }
+
+            const currentSong = queue.songs[0];
+            const embed = new EmbedBuilder()
+                .setTitle('Now Playing')
+                .setDescription(`[${currentSong.title}](${currentSong.url})`)
+                .setThumbnail(currentSong.thumbnail)
+                .setColor('#00ff00');
+
+            await interaction.reply({ embeds: [embed] });
         }
     }
-};
-
-// Skip Command
-const skipCommand = {
-    data: new SlashCommandBuilder()
-        .setName('skip')
-        .setDescription('Skip current song'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.isPlaying) {
-            return interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-        }
-
-        queue.skip();
-        await interaction.reply('⏭️ Skipped!');
-    }
-};
-
-// Stop Command
-const stopCommand = {
-    data: new SlashCommandBuilder()
-        .setName('stop')
-        .setDescription('Stop music and clear queue'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.isPlaying) {
-            return interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-        }
-
-        queue.stop();
-        deleteQueue(interaction.guildId);
-        await interaction.reply('⏹️ Stopped and cleared queue!');
-    }
-};
-
-// Queue Command
-const queueCommand = {
-    data: new SlashCommandBuilder()
-        .setName('queue')
-        .setDescription('Show music queue'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        const embed = createQueueEmbed(queue);
-        await interaction.reply({ embeds: [embed] });
-    }
-};
-
-// Now Playing Command
-const nowPlayingCommand = {
-    data: new SlashCommandBuilder()
-        .setName('nowplaying')
-        .setDescription('Show currently playing song'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.currentSong) {
-            return interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-        }
-
-        const embed = createMusicEmbed(queue);
-        const buttons = createControlButtons(false, queue.isPlaying);
-        await interaction.reply({ embeds: [embed], components: [buttons] });
-    }
-};
-
-// Volume Command
-const volumeCommand = {
-    data: new SlashCommandBuilder()
-        .setName('volume')
-        .setDescription('Set volume level')
-        .addIntegerOption(option =>
-            option.setName('level')
-                .setDescription('Volume (0-200)')
-                .setRequired(true)
-                .setMinValue(0)
-                .setMaxValue(200)
-        ),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        const level = interaction.options.getInteger('level');
-        
-        queue.setVolume(level / 100);
-        await interaction.reply(`🔊 Volume: ${level}%`);
-    }
-};
-
-// Loop Command
-const loopCommand = {
-    data: new SlashCommandBuilder()
-        .setName('loop')
-        .setDescription('Toggle loop mode'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.isPlaying) {
-            return interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-        }
-
-        const status = queue.toggleLoop();
-        await interaction.reply(`🔁 Loop ${status ? 'ON' : 'OFF'}!`);
-    }
-};
-
-// Pause Command
-const pauseCommand = {
-    data: new SlashCommandBuilder()
-        .setName('pause')
-        .setDescription('Pause current song'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.isPlaying) {
-            return interaction.reply({ content: '❌ Nothing is playing!', ephemeral: true });
-        }
-
-        if (queue.isPaused) {
-            return interaction.reply({ content: '❌ Already paused!', ephemeral: true });
-        }
-
-        queue.pause();
-        await interaction.reply('⏸️ Paused!');
-    }
-};
-
-// Resume Command
-const resumeCommand = {
-    data: new SlashCommandBuilder()
-        .setName('resume')
-        .setDescription('Resume paused song'),
-
-    async execute(interaction) {
-        const queue = getQueue(interaction.guildId);
-        
-        if (!queue.isPaused) {
-            return interaction.reply({ content: '❌ Not paused!', ephemeral: true });
-        }
-
-        queue.resume();
-        await interaction.reply('▶️ Resumed!');
-    }
-};
-
-module.exports = [
-    playCommand,
-    skipCommand,
-    stopCommand,
-    queueCommand,
-    nowPlayingCommand,
-    volumeCommand,
-    loopCommand,
-    pauseCommand,
-    resumeCommand
 ];
+
+async function playSong(queue, guild, client) {
+    if (!queue.songs.length) {
+        queue.playing = false;
+        queue.connection.destroy();
+        client.musicQueues.delete(guild.id);
+        return;
+    }
+
+    const song = queue.songs[0];
+    try {
+        const stream = await play.stream(song.url);
+        const resource = createAudioResource(stream.stream, {
+            inputType: stream.type
+        });
+
+        queue.player.play(resource);
+        queue.player.once(AudioPlayerStatus.Idle, () => {
+            queue.songs.shift();
+            playSong(queue, guild, client);
+        });
+    } catch (error) {
+        console.error(error);
+        queue.songs.shift();
+        playSong(queue, guild, client);
+    }
+}
+
+module.exports = commands;
