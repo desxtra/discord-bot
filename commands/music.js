@@ -18,15 +18,13 @@ const commands = [
             const voiceChannel = interaction.member.voice.channel;
 
             if (!voiceChannel) {
-                return interaction.reply('You need to be in a voice channel to use this command!');
+                return interaction.editReply('You need to be in a voice channel to use this command!');
             }
 
             const permissions = voiceChannel.permissionsFor(interaction.client.user);
             if (!permissions.has('Connect') || !permissions.has('Speak')) {
-                return interaction.reply('I need permissions to join and speak in your voice channel!');
+                return interaction.editReply('I need permissions to join and speak in your voice channel!');
             }
-
-            await interaction.deferReply();
 
             try {
                 let songInfo;

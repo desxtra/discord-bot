@@ -3,19 +3,6 @@ const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { registerCommands } = require('./handlers/commandHandler');
 const { interactionCreate } = require('./handlers/interactionHandler');
 
-// Configure play-dl
-async function setupPlayDL() {
-    try {
-        await play.setToken({
-            youtube: {
-                cookie: process.env.YOUTUBE_COOKIE || '',
-            },
-        });
-    } catch (error) {
-        console.warn('Warning: play-dl setup failed:', error);
-    }
-}
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -52,13 +39,8 @@ process.on('uncaughtException', (error) => {
     console.error('Uncaught exception:', error);
 });
 
-// Initialize play-dl and login
-(async () => {
-    try {
-        await setupPlayDL();
-        await client.login(process.env.DISCORD_TOKEN);
-    } catch (error) {
-        console.error('Failed to initialize:', error);
-        process.exit(1);
-    }
-})();
+// Login to Discord
+client.login(process.env.DISCORD_TOKEN).catch(error => {
+    console.error('Failed to login:', error);
+    process.exit(1);
+});

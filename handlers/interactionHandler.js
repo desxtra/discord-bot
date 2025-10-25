@@ -4,6 +4,11 @@ async function interactionCreate(interaction, client) {
     if (!interaction.isCommand() && !interaction.isButton()) return;
 
     try {
+        // Defer reply immediately for all interactions
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply().catch(() => {});
+        }
+
         if (interaction.isCommand()) {
             const command = client.commands.get(interaction.commandName);
             if (!command) return;
