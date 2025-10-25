@@ -8,8 +8,7 @@ const {
     isYouTubeUrl,
     createMusicEmbed,
     createControlButtons,
-    createQueueEmbed,
-    clearCache
+    createQueueEmbed
 } = require('../utils/music');
 
 // Play Command
@@ -225,22 +224,6 @@ const resumeCommand = {
     }
 };
 
-// Clear Cache Command
-const clearCacheCommand = {
-    data: new SlashCommandBuilder()
-        .setName('clearcache')
-        .setDescription('Clear music cache (Owner only)'),
-
-    async execute(interaction) {
-        if (interaction.user.id !== process.env.BOT_OWNER_ID) {
-            return interaction.reply({ content: '❌ Owner only!', ephemeral: true });
-        }
-
-        const count = clearCache();
-        await interaction.reply(`🗑️ Cleared ${count} cached files!`);
-    }
-};
-
 module.exports = [
     playCommand,
     skipCommand,
@@ -250,6 +233,5 @@ module.exports = [
     volumeCommand,
     loopCommand,
     pauseCommand,
-    resumeCommand,
-    clearCacheCommand
+    resumeCommand
 ];

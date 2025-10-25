@@ -9,11 +9,15 @@ module.exports = (client) => {
             await command.execute(interaction);
         } catch (error) {
             console.error('Command error:', error);
-            const reply = { content: 'Something went wrong.', ephemeral: true };
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(reply);
-            } else {
-                await interaction.reply(reply);
+            try {
+                const reply = { content: 'Something went wrong. Please try again.', ephemeral: true };
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.reply(reply);
+                } else {
+                    await interaction.followUp(reply).catch(() => {});
+                }
+            } catch (e) {
+                console.error('Error handling command error:', e);
             }
         }
     });
