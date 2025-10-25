@@ -50,23 +50,36 @@ class MusicQueue {
       const ytdlStream = ytdl(song.url, {
         filter: 'audioonly',
         quality: 'highestaudio',
-        highWaterMark: 1 << 25
+        highWaterMark: 1 << 25,
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+        }
       });
 
       const ffmpeg = spawn(ffmpegPath, [
         '-i', 'pipe:0',
-        '-analyzeduration', '0',
-        '-loglevel', 'error',
         '-acodec', 'libopus',
         '-f', 'opus',
         '-ar', '48000',
         '-ac', '2',
         'pipe:1'
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      ]);
 
-      ytdlStream.on('error', err => console.error('YouTube error:', err));
-      ffmpeg.stdin.on('error', err => console.error('FFMPEG input error:', err));
-      ffmpeg.stderr.on('data', data => console.warn('FFMPEG:', data.toString()));
+      ytdlStream.on('error', err => {
+        console.error('YouTube error:', err);
+        this.playNext().catch(console.error);
+      });
+
+      ffmpeg.on('error', err => {
+        console.error('FFMPEG error:', err);
+        this.playNext().catch(console.error);
+      });
+
+      ffmpeg.stderr.on('data', data => {
+        console.warn('FFMPEG:', data.toString());
+      });
 
       ytdlStream.pipe(ffmpeg.stdin);
 
@@ -209,7 +222,13 @@ async function searchYouTube(query) {
 }
 
 async function getVideoInfo(url) {
-  const info = await ytdl.getInfo(url);
+  const info = await ytdl.getInfo(url, {
+    requestOptions: {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    }
+  });
   const v = info.videoDetails;
   return {
     title: v.title,
