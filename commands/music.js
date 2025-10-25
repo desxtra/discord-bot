@@ -20,6 +20,11 @@ const commands = [
                 return interaction.reply('You need to be in a voice channel to use this command!');
             }
 
+            const permissions = voiceChannel.permissionsFor(interaction.client.user);
+            if (!permissions.has('Connect') || !permissions.has('Speak')) {
+                return interaction.reply('I need permissions to join and speak in your voice channel!');
+            }
+
             await interaction.deferReply();
 
             try {
@@ -28,17 +33,21 @@ const commands = [
                     songInfo = await play.video_info(query);
                 } else {
                     const searchResult = await play.search(query, { limit: 1 });
-                    if (!searchResult.length) {
+                    if (!searchResult || !searchResult.length) {
                         return interaction.editReply('No results found!');
                     }
                     songInfo = await play.video_info(searchResult[0].url);
                 }
 
+                if (!songInfo || !songInfo.video_details) {
+                    return interaction.editReply('Could not get song information!');
+                }
+
                 const song = {
-                    title: songInfo.video_details.title,
+                    title: songInfo.video_details.title || 'Unknown Title',
                     url: songInfo.video_details.url,
-                    thumbnail: songInfo.video_details.thumbnail.url,
-                    duration: songInfo.video_details.durationInSec
+                    thumbnail: songInfo.video_details.thumbnail?.url || '',
+                    duration: songInfo.video_details.durationInSec || 0
                 };
 
                 // Get or create queue for the guild
@@ -234,17 +243,46 @@ async function playSong(queue, guild, client) {
     const song = queue.songs[0];
     try {
         const stream = await play.stream(song.url);
+        if (!stream) {
+            console.error('Failed to get stream for:', song.title);
+            queue.songs.shift();
+            return playSong(queue, guild, client);
+        }
+
         const resource = createAudioResource(stream.stream, {
-            inputType: stream.type
+            inputType: stream.type,
+            inlineVolume: true
         });
 
         queue.player.play(resource);
+        console.log('Playing:', song.title);
+
+        // Handle different player states
+        queue.player.on(AudioPlayerStatus.Playing, () => {
+            console.log('Player status: Playing');
+        });
+
+        queue.player.on(AudioPlayerStatus.Buffering, () => {
+            console.log('Player status: Buffering');
+        });
+
+        queue.player.on(AudioPlayerStatus.AutoPaused, () => {
+            console.log('Player status: AutoPaused');
+        });
+
         queue.player.once(AudioPlayerStatus.Idle, () => {
+            console.log('Song finished:', song.title);
+            queue.songs.shift();
+            playSong(queue, guild, client);
+        });
+
+        queue.player.on('error', error => {
+            console.error('Player error:', error);
             queue.songs.shift();
             playSong(queue, guild, client);
         });
     } catch (error) {
-        console.error(error);
+        console.error('Error playing song:', song.title, error);
         queue.songs.shift();
         playSong(queue, guild, client);
     }
