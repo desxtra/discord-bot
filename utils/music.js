@@ -55,7 +55,9 @@ class MusicQueue {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
           }
-        }
+        },
+        // Attempt to avoid signature extraction issues
+        dlChunkSize: 0
       });
 
       const ffmpeg = spawn(ffmpegPath, [
@@ -87,6 +89,10 @@ class MusicQueue {
         inputType: 'opus',
         inlineVolume: true
       });
+
+      if (!resource) {
+        throw new Error('Failed to create audio resource');
+      }
       resource.volume.setVolume(this.volume);
 
       this.player.play(resource);
@@ -227,7 +233,9 @@ async function getVideoInfo(url) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
-    }
+    },
+    // Attempt to avoid signature extraction issues
+    dlChunkSize: 0
   });
   const v = info.videoDetails;
   return {
