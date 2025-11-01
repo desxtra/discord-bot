@@ -34,30 +34,34 @@ function createMusicControls(guildId) {
 async function createStream(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
-            const stream = ytdl(url, {
-                filter: 'audioonly',
+            console.log(`Attempt ${i + 1} to create stream for ${url}`);
+            
+            const info = await ytdl.getInfo(url);
+            const format = ytdl.chooseFormat(info.formats, { filter: 'audioonly', quality: 'highestaudio' });
+            
+            if (!format) {
+                throw new Error('No suitable audio format found');
+            }
+
+            return ytdl.downloadFromInfo(info, {
+                format: format,
                 highWaterMark: 1 << 25,
-                quality: 'highestaudio',
                 requestOptions: {
                     headers: {
-                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+                        cookie: process.env.YOUTUBE_COOKIE || '',
+                        'x-youtube-identity-token': process.env.YOUTUBE_IDENTITY || '',
+                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                        'accept-language': 'en-US,en;q=0.9'
                     }
                 }
             });
-
-            // Wait for the stream to be ready
-            await new Promise((resolve, reject) => {
-                stream.once('readable', resolve);
-                stream.once('error', reject);
-            });
-
-            return stream;
         } catch (error) {
             console.error(`Attempt ${i + 1} failed:`, error);
             if (i === retries - 1) throw error;
-            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i))); // Exponential backoff
         }
     }
+    throw new Error('All attempts to create stream failed');
 }
 
 async function playSong(queue, guild, interaction) {
@@ -73,29 +77,33 @@ async function playSong(queue, guild, interaction) {
 
     const song = queue.songs[0];
     try {
-        // Ensure we have a valid connection
         if (!queue.connection) {
             console.error('No connection available');
             return;
         }
 
         console.log('Creating stream for:', song.title);
-        const stream = await createStream(song.url).catch(error => {
-            console.error('Failed to create stream:', error);
-            // Skip to next song on stream error
+        const stream = await createStream(song.url);
+        
+        if (!stream) {
+            console.error('Failed to create stream for:', song.title);
+            queue.songs.shift();
+            return playSong(queue, guild, interaction);
+        }
+
+        stream.on('error', error => {
+            console.error('Stream error:', error);
             queue.songs.shift();
             playSong(queue, guild, interaction);
-            throw error;
         });
 
         const resource = createAudioResource(stream, { 
-            inlineVolume: true 
+            inlineVolume: true,
+            inputType: 'opus'
         });
+
         resource.volume.setVolume(queue.volume || 0.5);
-
-        // Remove any existing listeners to prevent duplicates
         queue.player.removeAllListeners();
-
         queue.player.play(resource);
         console.log('Playing:', song.title);
 
@@ -106,29 +114,21 @@ async function playSong(queue, guild, interaction) {
 
         queue.player.once(AudioPlayerStatus.Idle, () => {
             console.log('Song finished:', song.title);
-            setTimeout(() => {
-                queue.songs.shift();
-                playSong(queue, guild, interaction);
-            }, 1000);
+            queue.songs.shift();
+            playSong(queue, guild, interaction);
         });
 
         queue.player.on('error', error => {
             console.error('Player error:', error);
-            // Skip to next song on player error
-            setTimeout(() => {
-                queue.songs.shift();
-                playSong(queue, guild, interaction);
-            }, 1000);
+            queue.songs.shift();
+            playSong(queue, guild, interaction);
         });
 
         queue.connection.subscribe(queue.player);
     } catch (error) {
         console.error('Error playing song:', song.title, error);
-        // Skip to next song on error
-        setTimeout(() => {
-            queue.songs.shift();
-            playSong(queue, guild, interaction);
-        }, 1000);
+        queue.songs.shift();
+        playSong(queue, guild, interaction);
     }
 }
 
@@ -146,7 +146,6 @@ async function handleMusicCommand(interaction, client) {
         throw new Error('I need permissions to join and speak in your voice channel!');
     }
 
-    // Defer reply immediately to prevent interaction timeout
     await interaction.deferReply();
 
     let songInfo;
@@ -257,7 +256,6 @@ const commands = [
                 await handleMusicCommand(interaction, client);
             } catch (error) {
                 console.error('Error in play command:', error);
-                // Check if interaction is still valid
                 if (interaction.deferred || interaction.replied) {
                     await interaction.editReply({ 
                         content: error.message || 'There was an error while processing your request!' 
@@ -412,5 +410,4 @@ const commands = [
     }
 ];
 
-// Export commands directly for the command handler
 module.exports = commands;

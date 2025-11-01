@@ -1,64 +1,89 @@
-async function handleMusicButton(interaction, client) {
-    if (!interaction.isButton()) return;
+const { getVoiceConnection } = require('@discordjs/voice');
+const { musicQueues } = require('../commands/music.js');
+
+async function handleMusicButton(interaction) {
+    const [action, guildId] = interaction.customId.split('_');
+    const queue = musicQueues.get(guildId);
+
+    if (!queue) {
+        return await interaction.reply({ 
+            content: 'There is no active music queue!', 
+            ephemeral: true 
+        });
+    }
 
     try {
-        await interaction.deferReply({ ephemeral: true });
-        
-        const queue = client.musicQueues.get(interaction.guildId);
-        if (!queue) {
-            return await interaction.editReply({ content: 'There is no active music queue!' });
-        }
-
-        switch (interaction.customId) {
+        switch (action) {
             case 'pause':
-                if (!queue.player.pause()) {
-                    return await interaction.editReply({ content: 'The music is already paused!' });
+                if (queue.player.state.status === 'paused') {
+                    return await interaction.reply({ 
+                        content: 'The music is already paused!', 
+                        ephemeral: true 
+                    });
                 }
-                await interaction.editReply({ content: 'Paused the music!' });
+                queue.player.pause();
+                await interaction.reply({ 
+                    content: 'Paused the music!', 
+                    ephemeral: true 
+                });
                 break;
 
             case 'resume':
-                if (!queue.player.unpause()) {
-                    return await interaction.editReply({ content: 'The music is already playing!' });
+                if (queue.player.state.status === 'playing') {
+                    return await interaction.reply({ 
+                        content: 'The music is already playing!', 
+                        ephemeral: true 
+                    });
                 }
-                await interaction.editReply({ content: 'Resumed the music!' });
+                queue.player.unpause();
+                await interaction.reply({ 
+                    content: 'Resumed the music!', 
+                    ephemeral: true 
+                });
                 break;
 
             case 'skip':
-                if (queue.songs.length <= 1) {
-                    queue.songs = [];
-                    queue.player.stop();
-                    queue.connection.destroy();
-                    client.musicQueues.delete(interaction.guildId);
-                    return await interaction.editReply({ content: 'No more songs in queue. Disconnecting!' });
+                if (!queue.songs.length) {
+                    return await interaction.reply({ 
+                        content: 'There are no songs to skip!', 
+                        ephemeral: true 
+                    });
                 }
-                queue.player.stop(); // This will trigger the 'idle' event which will play the next song
-                await interaction.editReply({ content: 'Skipped the current song!' });
+                const skippedSong = queue.songs[0];
+                queue.player.stop();
+                await interaction.reply({ 
+                    content: `Skipped **${skippedSong.title}**`, 
+                    ephemeral: true 
+                });
                 break;
 
             case 'stop':
                 queue.songs = [];
                 queue.player.stop();
-                queue.connection.destroy();
-                client.musicQueues.delete(interaction.guildId);
-                await interaction.editReply({ content: 'Stopped the music and cleared the queue!' });
+                const connection = getVoiceConnection(guildId);
+                if (connection) {
+                    connection.destroy();
+                }
+                musicQueues.delete(guildId);
+                await interaction.reply({ 
+                    content: 'Stopped the music and cleared the queue!', 
+                    ephemeral: true 
+                });
                 break;
 
             default:
-                await interaction.editReply({ content: 'Unknown button interaction!' });
+                await interaction.reply({ 
+                    content: 'Unknown button action!', 
+                    ephemeral: true 
+                });
         }
     } catch (error) {
-        console.error('Button interaction error:', error);
-        try {
-            if (interaction.deferred) {
-                await interaction.editReply({ content: 'There was an error processing your request!' });
-            } else {
-                await interaction.reply({ content: 'There was an error processing your request!', ephemeral: true });
-            }
-        } catch (e) {
-            console.error('Error while handling button error:', e);
-        }
+        console.error('Error handling music button:', error);
+        await interaction.reply({ 
+            content: 'There was an error while processing the button!', 
+            ephemeral: true 
+        });
     }
 }
 
-module.exports = { handleMusicButton };
+module.exports = handleMusicButton;
