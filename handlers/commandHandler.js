@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 module.exports = {
-    registerCommands(client) {
+    async registerCommands(client) {
         const commands = [];
         
         // Read command files
@@ -34,19 +34,17 @@ module.exports = {
 
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
-        (async () => {
-            try {
-                console.log('Started refreshing application (/) commands.');
+        try {
+            console.log('Started refreshing application (/) commands.');
 
-                await rest.put(
-                    Routes.applicationCommands(client.user.id),
-                    { body: commands },
-                );
+            const data = await rest.put(
+                Routes.applicationGuildCommands(client.user.id, client.guilds.cache.first()?.id),
+                { body: commands },
+            );
 
-                console.log('Successfully reloaded application (/) commands.');
-            } catch (error) {
-                console.error('Error refreshing commands:', error);
-            }
-        })();
+            console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+        } catch (error) {
+            console.error('Error refreshing commands:', error);
+        }
     }
 };

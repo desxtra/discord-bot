@@ -23,9 +23,13 @@ client.commands = new Collection();
 client.musicQueues = new Map();
 
 // Register commands when the bot is ready
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    registerCommands(client);
+    try {
+        await registerCommands(client);
+    } catch (error) {
+        console.error('Failed to register commands:', error);
+    }
 });
 
 // Handle interactions
