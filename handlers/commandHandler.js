@@ -15,15 +15,26 @@ module.exports = {
             try {
                 const commandModule = require(filePath);
                 
-                // Handle both array and single command exports
-                if (Array.isArray(commandModule)) {
+                // Handle module exports with commands property
+                if (commandModule.commands) {
+                    commandModule.commands.forEach(cmd => {
+                        if (cmd.data && cmd.execute) {
+                            client.commands.set(cmd.data.name, cmd);
+                            commands.push(cmd.data.toJSON());
+                        }
+                    });
+                }
+                // Handle direct array exports
+                else if (Array.isArray(commandModule)) {
                     commandModule.forEach(cmd => {
                         if (cmd.data && cmd.execute) {
                             client.commands.set(cmd.data.name, cmd);
                             commands.push(cmd.data.toJSON());
                         }
                     });
-                } else if (commandModule.data && commandModule.execute) {
+                }
+                // Handle single command exports
+                else if (commandModule.data && commandModule.execute) {
                     client.commands.set(commandModule.data.name, commandModule);
                     commands.push(commandModule.data.toJSON());
                 }
@@ -37,8 +48,16 @@ module.exports = {
         try {
             console.log('Started refreshing application (/) commands.');
 
+            // Get the first guild the bot is in
+            const guild = client.guilds.cache.first();
+            if (!guild) {
+                throw new Error('Bot is not in any guild yet!');
+            }
+
+            console.log(`Registering commands for guild: ${guild.name} (${guild.id})`);
+
             const data = await rest.put(
-                Routes.applicationGuildCommands(client.user.id, client.guilds.cache.first()?.id),
+                Routes.applicationGuildCommands(client.user.id, guild.id),
                 { body: commands },
             );
 

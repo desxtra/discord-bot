@@ -389,5 +389,5 @@ const commands = [
     }
 ];
 
-// Export both commands and musicQueues for button handlers
-module.exports = { commands, musicQueues };
+// Export commands directly for the command handler
+module.exports = commands;
