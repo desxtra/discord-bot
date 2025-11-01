@@ -31,6 +31,35 @@ function createMusicControls(guildId) {
 }
 
 // Helper function to handle music playback
+async function createStream(url, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const stream = ytdl(url, {
+                filter: 'audioonly',
+                highWaterMark: 1 << 25,
+                quality: 'highestaudio',
+                requestOptions: {
+                    headers: {
+                        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+                    }
+                }
+            });
+
+            // Wait for the stream to be ready
+            await new Promise((resolve, reject) => {
+                stream.once('readable', resolve);
+                stream.once('error', reject);
+            });
+
+            return stream;
+        } catch (error) {
+            console.error(`Attempt ${i + 1} failed:`, error);
+            if (i === retries - 1) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
+        }
+    }
+}
+
 async function playSong(queue, guild, interaction) {
     if (!queue.songs.length) {
         queue.playing = false;
@@ -46,22 +75,17 @@ async function playSong(queue, guild, interaction) {
     try {
         // Ensure we have a valid connection
         if (!queue.connection) {
-            queue.connection = joinVoiceChannel({
-                channelId: queue.voiceChannel.id,
-                guildId: guild.id,
-                adapterCreator: guild.voiceAdapterCreator,
-            });
+            console.error('No connection available');
+            return;
         }
 
-        const stream = ytdl(song.url, {
-            filter: 'audioonly',
-            highWaterMark: 1 << 25,
-            quality: 'highestaudio'
-        }).on('error', error => {
-            console.error('Stream error:', error);
+        console.log('Creating stream for:', song.title);
+        const stream = await createStream(song.url).catch(error => {
+            console.error('Failed to create stream:', error);
             // Skip to next song on stream error
             queue.songs.shift();
             playSong(queue, guild, interaction);
+            throw error;
         });
 
         const resource = createAudioResource(stream, { 
@@ -247,7 +271,6 @@ const commands = [
             }
         }
     },
-    // ... rest of your commands with similar error handling
     {
         data: new SlashCommandBuilder()
             .setName('pause')
