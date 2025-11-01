@@ -4,7 +4,110 @@ const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerSta
 const ytdl = require('ytdl-core');
 const yts = require('yt-search');
 
+// Store search command reference for the play command
+const searchCommand = {
+    async execute(interaction, client) {
+        // Defer the reply first to avoid timeout
+        await interaction.deferReply();
+        
+        const query = interaction.options.getString('query');
+        const voiceChannel = interaction.member.voice.channel;
+
+        if (!voiceChannel) {
+            return interaction.editReply('You need to be in a voice channel to play music!');
+        }
+
+        const permissions = voiceChannel.permissionsFor(interaction.client.user);
+        if (!permissions.has('Connect') || !permissions.has('Speak')) {
+            return interaction.editReply('I need permissions to join and speak in your voice channel!');
+        }
+
+        try {
+            const results = await yts(query);
+            if (!results.videos.length) {
+                return interaction.editReply('No results found!');
+            }
+
+            const song = {
+                title: results.videos[0].title,
+                url: results.videos[0].url,
+                duration: results.videos[0].duration,
+                thumbnail: results.videos[0].thumbnail
+            };
+
+            let queue = client.musicQueues.get(interaction.guildId);
+
+            if (!queue) {
+                queue = {
+                    voiceChannel: voiceChannel,
+                    connection: null,
+                    songs: [],
+                    playing: false,
+                    player: createAudioPlayer()
+                };
+
+                client.musicQueues.set(interaction.guildId, queue);
+            }
+
+            queue.songs.push(song);
+
+            if (!queue.connection) {
+                try {
+                    queue.connection = joinVoiceChannel({
+                        channelId: voiceChannel.id,
+                        guildId: interaction.guildId,
+                        adapterCreator: interaction.guild.voiceAdapterCreator,
+                    });
+
+                    queue.connection.on('stateChange', (oldState, newState) => {
+                        if (newState.status === VoiceConnectionStatus.Disconnected) {
+                            if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
+                                // If the bot was moved to a different channel
+                                try {
+                                    entersState(queue.connection, VoiceConnectionStatus.Connecting, 5_000);
+                                } catch {
+                                    queue.connection.destroy();
+                                    client.musicQueues.delete(interaction.guildId);
+                                }
+                            }
+                        }
+                    });
+
+                    await playSong(queue, interaction.guild, client);
+                } catch (error) {
+                    client.musicQueues.delete(interaction.guildId);
+                    console.error(error);
+                    return interaction.editReply('There was an error connecting to the voice channel!');
+                }
+            } else {
+                const embed = new EmbedBuilder()
+                    .setTitle('Added to Queue')
+                    .setDescription(`[${song.title}](${song.url})`)
+                    .setThumbnail(song.thumbnail)
+                    .setColor('#00ff00');
+                await interaction.editReply({ embeds: [embed] });
+            }
+        } catch (error) {
+            console.error('Error in search command:', error);
+            return interaction.editReply('There was an error while searching for the song!');
+        }
+    }
+};
+
 const commands = [
+    {
+        data: new SlashCommandBuilder()
+            .setName('play')
+            .setDescription('Play music from YouTube')
+            .addStringOption(option =>
+                option.setName('query')
+                    .setDescription('The song to search for')
+                    .setRequired(true)),
+        async execute(interaction, client) {
+            // Pass the interaction to the search command's execute function
+            return await searchCommand.execute(interaction, client);
+        }
+    },
     {
         data: new SlashCommandBuilder()
             .setName('search')
