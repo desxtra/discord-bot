@@ -1,8 +1,11 @@
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus, getVoiceConnection } = require('@discordjs/voice');
 const ytdl = require('ytdl-core');
 const yts = require('yt-search');
+
+// Global music queues
+const musicQueues = new Map();
 
 // Helper function to create music control buttons
 function createMusicControls(guildId) {
@@ -28,57 +31,80 @@ function createMusicControls(guildId) {
 }
 
 // Helper function to handle music playback
-async function playSong(queue, guild, client) {
+async function playSong(queue, guild, interaction) {
     if (!queue.songs.length) {
         queue.playing = false;
-        if (queue.connection && queue.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-            queue.connection.destroy();
+        const connection = getVoiceConnection(guild.id);
+        if (connection) {
+            connection.destroy();
         }
-        client.musicQueues.delete(guild.id);
+        musicQueues.delete(guild.id);
         return;
     }
 
     const song = queue.songs[0];
     try {
+        // Ensure we have a valid connection
+        if (!queue.connection) {
+            queue.connection = joinVoiceChannel({
+                channelId: queue.voiceChannel.id,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
+            });
+        }
+
         const stream = ytdl(song.url, {
             filter: 'audioonly',
             highWaterMark: 1 << 25,
             quality: 'highestaudio'
+        }).on('error', error => {
+            console.error('Stream error:', error);
+            // Skip to next song on stream error
+            queue.songs.shift();
+            playSong(queue, guild, interaction);
         });
 
-        const resource = createAudioResource(stream, { inlineVolume: true });
-        resource.volume.setVolume(0.5);
-
-        queue.player.play(resource);
-        console.log('Playing:', song.title);
+        const resource = createAudioResource(stream, { 
+            inlineVolume: true 
+        });
+        resource.volume.setVolume(queue.volume || 0.5);
 
         // Remove any existing listeners to prevent duplicates
         queue.player.removeAllListeners();
 
+        queue.player.play(resource);
+        console.log('Playing:', song.title);
+
         queue.player.on(AudioPlayerStatus.Playing, () => {
             console.log('Player status: Playing');
+            queue.playing = true;
         });
 
         queue.player.once(AudioPlayerStatus.Idle, () => {
             console.log('Song finished:', song.title);
-            queue.player.removeAllListeners();
-            queue.songs.shift();
-            playSong(queue, guild, client);
+            setTimeout(() => {
+                queue.songs.shift();
+                playSong(queue, guild, interaction);
+            }, 1000);
         });
 
         queue.player.on('error', error => {
             console.error('Player error:', error);
-            queue.player.removeAllListeners();
-            queue.songs.shift();
-            playSong(queue, guild, client);
+            // Skip to next song on player error
+            setTimeout(() => {
+                queue.songs.shift();
+                playSong(queue, guild, interaction);
+            }, 1000);
         });
 
         queue.connection.subscribe(queue.player);
     } catch (error) {
         console.error('Error playing song:', song.title, error);
-        queue.player.removeAllListeners();
-        queue.songs.shift();
-        playSong(queue, guild, client);
+        // Skip to next song on error
+        setTimeout(() => {
+            queue.songs.shift();
+            playSong(queue, guild, interaction);
+        }, 1000);
     }
 }
 
@@ -96,9 +122,12 @@ async function handleMusicCommand(interaction, client) {
         throw new Error('I need permissions to join and speak in your voice channel!');
     }
 
+    // Defer reply immediately to prevent interaction timeout
+    await interaction.deferReply();
+
+    let songInfo;
+    
     try {
-        let songInfo;
-        
         if (ytdl.validateURL(query)) {
             const info = await ytdl.getInfo(query);
             songInfo = {
@@ -121,7 +150,7 @@ async function handleMusicCommand(interaction, client) {
             };
         }
 
-        let queue = client.musicQueues.get(interaction.guildId);
+        let queue = musicQueues.get(interaction.guildId);
 
         if (!queue) {
             queue = {
@@ -129,15 +158,18 @@ async function handleMusicCommand(interaction, client) {
                 connection: null,
                 songs: [],
                 playing: false,
-                player: createAudioPlayer()
+                player: createAudioPlayer(),
+                volume: 0.5
             };
-
-            client.musicQueues.set(interaction.guildId, queue);
+            musicQueues.set(interaction.guildId, queue);
         }
 
         queue.songs.push(songInfo);
 
-        if (!queue.connection) {
+        const embed = new EmbedBuilder()
+            .setColor('#00ff00');
+
+        if (!queue.playing) {
             try {
                 queue.connection = joinVoiceChannel({
                     channelId: voiceChannel.id,
@@ -147,43 +179,41 @@ async function handleMusicCommand(interaction, client) {
 
                 queue.connection.on('stateChange', (oldState, newState) => {
                     if (newState.status === VoiceConnectionStatus.Disconnected) {
-                        queue.connection.destroy();
-                        client.musicQueues.delete(interaction.guildId);
+                        if (queue.connection) {
+                            queue.connection.destroy();
+                        }
+                        musicQueues.delete(interaction.guildId);
                     }
                 });
 
-                await playSong(queue, interaction.guild, client);
+                await playSong(queue, interaction.guild, interaction);
 
-                const embed = new EmbedBuilder()
-                    .setTitle('Now Playing')
-                    .setDescription(`[${songInfo.title}](${songInfo.url})`)
-                    .setThumbnail(songInfo.thumbnail)
-                    .setColor('#00ff00');
-
-                const row = createMusicControls(interaction.guildId);
+                embed.setTitle('Now Playing')
+                    .setDescription(`[${songInfo.title}](${songInfo.url})`);
                 
-                return await interaction.editReply({ 
-                    embeds: [embed],
-                    components: [row]
-                });
+                if (songInfo.thumbnail) {
+                    embed.setThumbnail(songInfo.thumbnail);
+                }
             } catch (error) {
-                client.musicQueues.delete(interaction.guildId);
+                musicQueues.delete(interaction.guildId);
                 throw error;
             }
         } else {
-            const embed = new EmbedBuilder()
-                .setTitle('Added to Queue')
-                .setDescription(`[${songInfo.title}](${songInfo.url})`)
-                .setThumbnail(songInfo.thumbnail)
-                .setColor('#00ff00');
-
-            const row = createMusicControls(interaction.guildId);
-
-            return await interaction.editReply({ 
-                embeds: [embed],
-                components: [row]
-            });
+            embed.setTitle('Added to Queue')
+                .setDescription(`[${songInfo.title}](${songInfo.url})`);
+            
+            if (songInfo.thumbnail) {
+                embed.setThumbnail(songInfo.thumbnail);
+            }
         }
+
+        const row = createMusicControls(interaction.guildId);
+        
+        await interaction.editReply({ 
+            embeds: [embed],
+            components: [row]
+        });
+
     } catch (error) {
         throw error;
     }
@@ -196,36 +226,28 @@ const commands = [
             .setDescription('Play music from YouTube')
             .addStringOption(option =>
                 option.setName('query')
-                    .setDescription('The song to search for')
+                    .setDescription('The song to search for or YouTube URL')
                     .setRequired(true)),
         async execute(interaction, client) {
-            await interaction.deferReply();
             try {
                 await handleMusicCommand(interaction, client);
             } catch (error) {
                 console.error('Error in play command:', error);
-                await interaction.editReply({ content: error.message || 'There was an error while processing your request!' });
+                // Check if interaction is still valid
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply({ 
+                        content: error.message || 'There was an error while processing your request!' 
+                    });
+                } else {
+                    await interaction.reply({ 
+                        content: error.message || 'There was an error while processing your request!',
+                        ephemeral: true 
+                    });
+                }
             }
         }
     },
-    {
-        data: new SlashCommandBuilder()
-            .setName('search')
-            .setDescription('Search and play music from YouTube')
-            .addStringOption(option =>
-                option.setName('query')
-                    .setDescription('The song to search for')
-                    .setRequired(true)),
-        async execute(interaction, client) {
-            await interaction.deferReply();
-            try {
-                await handleMusicCommand(interaction, client);
-            } catch (error) {
-                console.error('Error in search command:', error);
-                await interaction.editReply({ content: error.message || 'There was an error while processing your request!' });
-            }
-        }
-    },
+    // ... rest of your commands with similar error handling
     {
         data: new SlashCommandBuilder()
             .setName('pause')
@@ -233,7 +255,7 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue || !queue.playing) {
                 return interaction.editReply('There is nothing playing!');
             }
@@ -253,7 +275,7 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue || !queue.playing) {
                 return interaction.editReply('There is nothing to resume!');
             }
@@ -273,7 +295,7 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue) {
                 return interaction.editReply('There is nothing playing!');
             }
@@ -281,11 +303,11 @@ const commands = [
             queue.songs = [];
             queue.player.stop();
             
-            if (queue.connection && queue.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+            if (queue.connection) {
                 queue.connection.destroy();
             }
             
-            client.musicQueues.delete(interaction.guildId);
+            musicQueues.delete(interaction.guildId);
             await interaction.editReply('Stopped the music and cleared the queue!');
         }
     },
@@ -296,13 +318,13 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue || !queue.songs.length) {
                 return interaction.editReply('There is nothing to skip!');
             }
 
             const skippedSong = queue.songs[0];
-            queue.player.stop(); // This will trigger the idle event and move to next song
+            queue.player.stop();
             
             await interaction.editReply(`Skipped **${skippedSong.title}**`);
         }
@@ -314,7 +336,7 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue || !queue.songs.length) {
                 return interaction.editReply('There is no queue!');
             }
@@ -342,7 +364,7 @@ const commands = [
         async execute(interaction, client) {
             await interaction.deferReply();
             
-            const queue = client.musicQueues.get(interaction.guildId);
+            const queue = musicQueues.get(interaction.guildId);
             if (!queue || !queue.songs.length) {
                 return interaction.editReply('There is nothing playing!');
             }
@@ -367,4 +389,5 @@ const commands = [
     }
 ];
 
-module.exports = commands;
+// Export both commands and musicQueues for button handlers
+module.exports = { commands, musicQueues };

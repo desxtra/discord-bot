@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const { registerCommands } = require('./handlers/commandHandler');
 const { interactionCreate } = require('./handlers/interactionHandler');
+const { AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
 
 // Validate environment variables
 if (!process.env.DISCORD_TOKEN) {

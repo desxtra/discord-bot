@@ -1,4 +1,5 @@
 const { InteractionType } = require('discord.js');
+const { AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
 
 module.exports = {
     async interactionCreate(interaction, client) {
@@ -22,16 +23,19 @@ module.exports = {
                     if (interaction.replied || interaction.deferred) {
                         await interaction.followUp({ 
                             content: errorMessage, 
-                            flags: 64 // Equivalent to ephemeral
+                            ephemeral: true
                         });
                     } else {
                         await interaction.reply({ 
                             content: errorMessage, 
-                            flags: 64 // Equivalent to ephemeral
+                            ephemeral: true
                         });
                     }
                 } catch (replyError) {
-                    console.error('Failed to send error message:', replyError);
+                    // Ignore "unknown interaction" and "already acknowledged" errors
+                    if (replyError.code !== 10062 && replyError.code !== 40060) {
+                        console.error('Failed to send error message:', replyError);
+                    }
                 }
             }
         }
@@ -44,7 +48,7 @@ module.exports = {
                 if (guildId !== interaction.guildId) {
                     return await interaction.reply({ 
                         content: 'This button is not for this server!', 
-                        flags: 64 
+                        ephemeral: true 
                     });
                 }
 
@@ -53,7 +57,16 @@ module.exports = {
                 if (!queue) {
                     return await interaction.reply({ 
                         content: 'No music is currently playing!', 
-                        flags: 64 
+                        ephemeral: true 
+                    });
+                }
+
+                // Check if user is in the same voice channel
+                const voiceChannel = interaction.member.voice.channel;
+                if (!voiceChannel || voiceChannel.id !== queue.voiceChannel.id) {
+                    return await interaction.reply({
+                        content: 'You need to be in the same voice channel to control the music!',
+                        ephemeral: true
                     });
                 }
 
@@ -62,13 +75,13 @@ module.exports = {
                         if (queue.player.state.status === AudioPlayerStatus.Playing) {
                             queue.player.pause();
                             await interaction.reply({ 
-                                content: 'Music paused!', 
-                                flags: 64 
+                                content: '⏸️ Music paused!', 
+                                ephemeral: true 
                             });
                         } else {
                             await interaction.reply({ 
                                 content: 'Music is not playing!', 
-                                flags: 64 
+                                ephemeral: true 
                             });
                         }
                         break;
@@ -77,13 +90,13 @@ module.exports = {
                         if (queue.player.state.status === AudioPlayerStatus.Paused) {
                             queue.player.unpause();
                             await interaction.reply({ 
-                                content: 'Music resumed!', 
-                                flags: 64 
+                                content: '▶️ Music resumed!', 
+                                ephemeral: true 
                             });
                         } else {
                             await interaction.reply({ 
                                 content: 'Music is not paused!', 
-                                flags: 64 
+                                ephemeral: true 
                             });
                         }
                         break;
@@ -93,13 +106,13 @@ module.exports = {
                             const skippedSong = queue.songs[0];
                             queue.player.stop();
                             await interaction.reply({ 
-                                content: `Skipped **${skippedSong.title}**`, 
-                                flags: 64 
+                                content: `⏭️ Skipped **${skippedSong.title}**`, 
+                                ephemeral: true 
                             });
                         } else {
                             await interaction.reply({ 
                                 content: 'No songs to skip!', 
-                                flags: 64 
+                                ephemeral: true 
                             });
                         }
                         break;
@@ -107,31 +120,42 @@ module.exports = {
                     case 'stop':
                         queue.songs = [];
                         queue.player.stop();
-                        if (queue.connection && queue.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                        if (queue.connection) {
                             queue.connection.destroy();
                         }
                         client.musicQueues.delete(interaction.guildId);
                         await interaction.reply({ 
-                            content: 'Stopped the music and cleared the queue!', 
-                            flags: 64 
+                            content: '⏹️ Stopped the music and cleared the queue!', 
+                            ephemeral: true 
                         });
                         break;
                         
                     default:
                         await interaction.reply({ 
                             content: 'Unknown button action!', 
-                            flags: 64 
+                            ephemeral: true 
                         });
                 }
             } catch (error) {
                 console.error('Button interaction error:', error);
                 try {
-                    await interaction.reply({ 
-                        content: 'There was an error processing this button!', 
-                        flags: 64 
-                    });
+                    // Check if we can still reply
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ 
+                            content: 'There was an error processing this button!', 
+                            ephemeral: true 
+                        });
+                    } else {
+                        await interaction.reply({ 
+                            content: 'There was an error processing this button!', 
+                            ephemeral: true 
+                        });
+                    }
                 } catch (replyError) {
-                    console.error('Failed to send button error message:', replyError);
+                    // Ignore "unknown interaction" and "already acknowledged" errors
+                    if (replyError.code !== 10062 && replyError.code !== 40060) {
+                        console.error('Failed to send button error message:', replyError);
+                    }
                 }
             }
         }
