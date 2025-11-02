@@ -20,12 +20,18 @@ async function loadCommands(client) {
     try {
         console.log('Started refreshing application (/) commands.');
         
+        // Delete all commands for all guilds
+        for (const guild of client.guilds.cache.values()) {
+            console.log(`Deleting commands for guild: ${guild.name} (${guild.id})`);
+            await guild.commands.set([]);
+        }
+        
         // Register commands for all guilds the bot is in
         for (const guild of client.guilds.cache.values()) {
             console.log(`Registering commands for guild: ${guild.name} (${guild.id})`);
             await guild.commands.set(commands);
         }
-        
+
         console.log(`Successfully reloaded ${commands.length} application (/) commands.`);
     } catch (error) {
         console.error('Error registering commands:', error);
