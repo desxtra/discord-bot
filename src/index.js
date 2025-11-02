@@ -1,6 +1,5 @@
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const { loadCommands } = require('./utils/commandLoader');
-const { handleInteraction } = require('./utils/interactionHandler');
 const { discord } = require('./core/config');
 const fs = require('fs');
 const path = require('path');
@@ -22,23 +21,6 @@ client.musicQueues = new Collection();
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     await loadCommands(client);
-});
-
-// Handle interactions
-client.on('interactionCreate', async (interaction) => {
-    try {
-        await handleInteraction(client, interaction);
-    } catch (error) {
-        console.error('Error handling interaction:', error);
-        
-        // Only reply if the interaction hasn't been replied to
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({
-                content: 'There was an error executing this command.',
-                ephemeral: true
-            });
-        }
-    }
 });
 
 // Load all event handlers

@@ -1,5 +1,5 @@
 const { Events } = require('discord.js');
-const { handleInteraction } = require('../core/interactionManager');
+const { handleInteraction } = require('../utils/interactionHandler');
 
 module.exports = {
     name: Events.InteractionCreate,
