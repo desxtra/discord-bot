@@ -143,7 +143,6 @@ class MusicService {
 
         this.currentSong = this.queue.shift();
         try {
-            console.log('Current song details:', this.currentSong); // Detailed logging
             if (!this.currentSong.url) {
                 console.error('Song URL is undefined');
             this.currentSong = null;
@@ -151,9 +150,7 @@ class MusicService {
             return;
         }
 
-            console.log('Attempting to play song with URL:', this.currentSong.url);
             const stream = await play.stream(this.currentSong.url);
-            console.log('Stream created successfully'); // Additional logging
             const resource = createAudioResource(stream.stream, {
                 inputType: stream.type,
                 inlineVolume: true
@@ -161,7 +158,6 @@ class MusicService {
 
             resource.volume.setVolume(this.volume / 100);
             this.player.play(resource);
-            console.log('Playing resource'); // Additional logging
         } catch (error) {
             console.error('Error playing next song:', error);
         this.currentSong = null;
