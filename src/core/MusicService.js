@@ -143,19 +143,27 @@ class MusicService {
 
         this.currentSong = this.queue.shift();
         try {
+            console.log('Attempting to play song with URL:', this.currentSong.url); // Debugging line
+            if (!this.currentSong.url) {
+                console.error('Song URL is undefined');
+            this.currentSong = null;
+            this.playNext();
+            return;
+        }
+
             const stream = await play.stream(this.currentSong.url);
             const resource = createAudioResource(stream.stream, {
                 inputType: stream.type,
                 inlineVolume: true
             });
-            
+
             resource.volume.setVolume(this.volume / 100);
             this.player.play(resource);
         } catch (error) {
             console.error('Error playing next song:', error);
-            this.currentSong = null;
+        this.currentSong = null;
             this.playNext();
-        }
+    }
     }
 
     async skip(interaction) {
@@ -166,8 +174,8 @@ class MusicService {
 
         this.player.stop();
         await interaction.editReply('Skipped the current song!');
-    }
-
+        }
+        
     async stop(interaction) {
         this.queue = [];
         this.player.stop();
@@ -189,7 +197,7 @@ class MusicService {
         if (this.player.state.resource) {
             this.player.state.resource.volume.setVolume(volume / 100);
         }
-        
+
         await interaction.editReply(`Volume set to ${volume}%`);
     }
 
